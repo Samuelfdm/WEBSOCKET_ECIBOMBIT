@@ -21,7 +21,6 @@ io.on("connection", (socket) => {
             });
         });
 
-
         if (isUsernameTaken) {
             return callback?.({
                 success: false,
@@ -188,9 +187,9 @@ io.on("connection", (socket) => {
                 room,
                 players: game.players,
                 config: game.config,
-                board: game.board
+                board: game.board,
+                connectedPlayers:0
             };
-            console.log(games[game.gameId]);
 
             // Notificar a todos los clientes LISTOS
             Object.keys(rooms[room].players).forEach((playerId) => {
@@ -228,35 +227,71 @@ io.on("connection", (socket) => {
 
         socket.join(game.room);
         player.socketId = socket.id;
+
+        game.connectedPlayers = (game.connectedPlayers || 0) + 1;
+
+        if (game.connectedPlayers === game.players.length) {
+            let countdown = 3;
+
+            // Initial countdown
+            io.in(game.room).emit("startTimerGame", { countdown });
+
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                if (countdown > 0) {
+                    io.in(game.room).emit("startTimerGame", { countdown });
+                } else {
+                    clearInterval(countdownInterval);
+                    io.in(game.room).emit("startGame");
+
+                    // Game duration timer
+                    game.timeLeft = game.config.time * 60;
+
+                    io.in(game.room).emit("gameTimerTick", {  timeLeft: game.timeLeft});
+
+                    game.timerInterval = setInterval(() => {
+                        game.timeLeft--;
+
+                        if (game.timeLeft > 0) {
+                            io.in(game.room).emit("gameTimerTick", { timeLeft: game.timeLeft });
+                        } else {
+                            clearInterval(game.timerInterval);
+                            game.timerInterval = null;
+
+                            io.in(game.room).emit("gameTimerTick", { timeLeft: 0 });
+
+                            checkForWinner(game);
+                        }
+                    }, 1000);
+                }
+            }, 1000);
+        }
+
+
         console.log(`Jugador ${socket.id} (${username}) se unio al juego ${gameId}`);
-        socket.emit("gameState", {
-            gameId,
-            board: game.board,
-            players: game.players,
-            config: game.config
-        });
+
 
         return callback?.({ success: true });
     });
 
-    //Mover players
 
-    socket.on("move", ({ direction, playerId, xa ,ya , x, y,gameId }) => {
-        const roomName = Object.keys(rooms).find(room =>
-            Object.keys(rooms[room].players).includes(playerId)
-        );
-        if (!roomName || !gameId ) return;
-
+    socket.on("move", ({ direction, playerId, xa, ya, x, y, gameId }) => {
         const game = games[gameId];
+        if (!game) return;
+
         const afterCell = game.board.cells.find(cell => cell.x === x && cell.y === y);
         const beforeCell = game.board.cells.find(cell => cell.x === xa && cell.y === ya);
-        if (afterCell.type === 'EMPTY'){
+
+        if (afterCell && afterCell.type === 'EMPTY') {
             afterCell.playerId = playerId;
-            afterCell.type ='PLAYER';
-            beforeCell.playerId = null;
-            beforeCell.type = 'EMPTY';
-            // Reenvía el movimiento con coordenadas
-            socket.to(roomName).emit("playerMoved", {
+            afterCell.type = 'PLAYER';
+
+            if (beforeCell) {
+                beforeCell.playerId = null;
+                beforeCell.type = 'EMPTY';
+            }
+
+            socket.to(game.room).emit("playerMoved", {
                 playerId,
                 direction,
                 x,
@@ -265,28 +300,20 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("bombPlaced", ({ playerId, x, y }) => {
-        const roomName = Object.keys(rooms).find(room =>
-            Object.keys(rooms[room].players).includes(playerId)
-        );
-        if (!roomName) return;
-        // Reenvía posicion de la bomba con coordenadas
-        socket.to(roomName).emit("bombPlaced", { x, y });
+    socket.on("bombPlaced", ({ playerId, x, y, gameId }) => {
+        const game = games[gameId];
+        if (!game) return;
+
+        socket.to(game.room).emit("bombPlaced", { x, y });
     });
 
     socket.on("bombExploded", ({ playerId, explosionTiles, gameId }) => {
-        const roomName = Object.keys(rooms).find(room =>
-            Object.keys(rooms[room].players).includes(playerId)
-        );
-
-        if (!roomName || !gameId) return;
-
-        socket.to(roomName).emit("bombExplodedClient", { explosionTiles });
-
-
         const game = games[gameId];
-        const player = game.players.find(p => p.id === playerId);
+        if (!game) return;
 
+        socket.to(game.room).emit("bombExplodedClient", { explosionTiles });
+
+        const player = game.players.find(p => p.id === playerId);
         if (!player || player.dead) return;
 
         let score = 0;
@@ -297,50 +324,113 @@ io.on("connection", (socket) => {
 
             if (!cell) continue;
 
-            // Si la celda es un bloque destruible
             if (cell.type === 'BLOCK') {
                 score += 10;
                 cell.type = 'EMPTY';
             }
         }
 
-        // sumo puntaje
         player.score = (player.score || 0) + score;
-
-        io.in(roomName).emit("players", game.players);
+        checkForWinner(game);
+        io.in(game.room).emit("players", game.players);
     });
 
-    socket.on("playerKilled", ({ gameId, killerId, victimId }) =>{
-        const roomName = Object.keys(rooms).find(room =>
-            Object.keys(rooms[room].players).includes(killerId)
-        );
-
-        if (!roomName || !gameId) return;
-
-        let score = 0;
-        let kills = 0;
+    socket.on("playerKilled", ({ gameId, killerId, victimId, playerId, x, y }) => {
         const game = games[gameId];
-        const player = game.players.find(p => p.id === killerId);
-        const cell = game.board.cells.find(c => c.playerId === victimId);
+        if (!game) return;
+        //socket.to(game.room).emit("reportKill", { killerId, victimId, playerId });
+        const cell = game.board.cells.find(c => c.x === x && c.y === y);
 
-        if (!cell) return;
-
-        if (cell.playerId !== null) {
-
+        if (cell && cell.playerId === victimId) {
             cell.playerId = null;
-            score += 25;
-            kills += 1;
-            eliminatedPlayer = game.players.find(p => p.id === victimId);
-
-            if (eliminatedPlayer) {
-                eliminatedPlayer.dead = true;
-            }
+            cell.type = 'EMPTY';
         }
-        // sumo puntaje
-        player.score = (player.score || 0) + score;
-        player.kills = (player.kills || 0) + kills;
-        io.in(roomName).emit("players", game.players);
+
+        const eliminatedPlayer = game.players.find(p => p.id === victimId);
+        if (eliminatedPlayer) {
+            const previouslyAlive = game.players.filter(p => !p.dead).length;
+            eliminatedPlayer.dead = true;
+            const currentlyAlive = game.players.filter(p => !p.dead).length;
+            const simultaneousDeath = previouslyAlive === 2 && currentlyAlive === 0;
+            checkForWinner(game, simultaneousDeath);
+        }
+
+        const killerPlayer = game.players.find(p => p.id === killerId);
+
+        io.in(game.room).emit("playerDied", {
+            victimId,
+            killerId,
+            victimUsername: eliminatedPlayer?.username,
+            killerUsername: killerPlayer?.username,
+            suicide: killerId === victimId
+        });
+
+        //Aqui AGREGAMOS la condicion para que no aumente score ni kills al matarse a si mismo
+        if (killerPlayer && killerId !== victimId) {
+            killerPlayer.score = (killerPlayer.score || 0) + 25;
+            killerPlayer.kills = (killerPlayer.kills || 0) + 1;
+        }
+
+        //No estamos borrando al jugador del game.players, sino que estamos solamente cambiando su estado a dead=true
+        io.in(game.room).emit("players", game.players); // Actualizamos barra lateral
     });
+
+    function checkForWinner(game, simultaneousDeath = false) {
+
+        const alivePlayers = game.players.filter(p => !p.dead);
+
+        if (alivePlayers.length === 0) {
+            if (game.timerInterval) {
+                clearInterval(game.timerInterval);
+                game.timerInterval = null;
+            }
+
+            io.in(game.room).emit("gameOver", {
+                winner: null,
+                reason: simultaneousDeath
+                    ? "Todos los jugadores vivos murieron al mismo tiempo."
+                    : "Todos los jugadores han sido eliminados."
+            });
+
+            return true;
+        }
+
+        if (alivePlayers.length === 1) {
+            // Solo queda uno vivo
+            if (game.timerInterval) {
+                clearInterval(game.timerInterval);
+                game.timerInterval = null;
+            }
+
+            console.log(alivePlayers.map(p => p.id));
+            io.in(game.room).emit("gameOver", {
+                winners: alivePlayers.map(p => p.id),
+                winnerUserNames: alivePlayers.map(p => p.username),
+                reason: "Último jugador con vida."
+
+            });
+            return true;
+        }
+
+        if (game.timeLeft === 0) {
+            const topScore = Math.max(...alivePlayers.map(p => p.score || 0));
+            const topPlayers = alivePlayers.filter(p => (p.score || 0) === topScore);
+
+            const isTie = topPlayers.length > 1;
+            console.log(topPlayers.map(p => p.id));
+            io.in(game.room).emit("gameOver", {
+                winners: topPlayers.map(p => p.id),
+                winnerUsernames: topPlayers.map(p => p.username),
+                reason: isTie
+                    ? "Empate entre jugadores con el mayor puntaje."
+                    : "Mayor puntaje al finalizar el tiempo."
+            });
+            return true;
+        }
+
+        return false;
+    }
+
 
     socket.on("selectCharacter", ({ room, character }) => {
         if (rooms[room]) {
@@ -368,12 +458,79 @@ io.on("connection", (socket) => {
             delete rooms[room].players[socket.id];
             delete rooms[room].ready[socket.id];
             delete rooms[room].characters[socket.id];
-            io.to(room).emit("updateLobby", serializeRoom(rooms[room])); // 🔥 Notificar cambios
+            io.to(room).emit("updateLobby", serializeRoom(rooms[room]));
         }
         callback({ success: true });
     });
 
-    socket.on("disconnect", () => {});
+    socket.on("leaveGame", ({ gameId, playerId, x, y }, callback) => {
+        const game = games[gameId];
+        if (!game) return callback?.({ success: false });
+
+        const cell = game.board.cells.find(c => c.x === x && c.y === y);
+        if (cell && cell.playerId === playerId) {
+            cell.playerId = null;
+            cell.type = 'EMPTY';
+        }
+
+        const player = game.players.find(p => p.id === playerId);
+        if (player) {
+            player.dead = true;
+        }
+
+        // Notificar al resto
+        io.in(game.room).emit("players", game.players);
+        io.in(game.room).emit("playerLeft", { playerId }); // útil si quieres animación futura
+
+        // También limpiar de la sala si sigue registrada
+        const roomId = game.room;
+        const room = rooms[roomId];
+        if (room) {
+            delete room.players[playerId];
+            delete room.ready[playerId];
+            delete room.characters[playerId];
+            io.emit("roomsList", Object.keys(rooms));
+        }
+
+        callback?.({ success: true });
+    });
+
+    socket.on("disconnect", () => {
+        // Remover de cualquier juego
+        for (const gameId in games) {
+            const game = games[gameId];
+            const player = game.players.find(p => p.socketId === socket.id);
+            if (player && !player.dead) {
+                console.log(`Desconexión detectada. Eliminando ${socket.id} del juego ${gameId}`);
+                player.dead = true;
+                const playerId = player.id;
+                const cell = game.board.cells.find(c => c.playerId === player.id);
+                if (cell) {
+                    cell.playerId = null;
+                    cell.type = 'EMPTY';
+                }
+                io.to(game.room).emit("players", game.players);
+                io.in(game.room).emit("playerLeft", { playerId });
+            }
+        }
+
+        // Remover de cualquier sala (no activa)
+        for (const roomName in rooms) {
+            const room = rooms[roomName];
+            if (room.players[socket.id]) {
+                delete room.players[socket.id];
+                delete room.ready[socket.id];
+                delete room.characters[socket.id];
+                if (room.owner === socket.id) {
+                    io.to(roomName).emit("roomClosed", { message: "El dueño de la sala salió." });
+                    delete rooms[roomName];
+                    io.emit("roomsList", Object.keys(rooms));
+                } else {
+                    io.to(roomName).emit("updateLobby", serializeRoom(room));
+                }
+            }
+        }
+    });
 });
 
 function serializeRoom(room, socketId) {
