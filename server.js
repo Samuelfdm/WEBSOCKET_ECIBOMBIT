@@ -296,6 +296,10 @@ io.on("connection", (socket) => {
                 beforeCell.type = 'EMPTY';
             }
 
+            game.totalMoves = (game.totalMoves|| 0) + 1;
+            const player = game.players.find(p => p.id === playerId);
+            player.totalMoves = ( player.totalMoves || 0) + 1;
+
             socket.to(game.room).emit("playerMoved", {
                 playerId,
                 direction,
@@ -308,6 +312,10 @@ io.on("connection", (socket) => {
     socket.on("bombPlaced", ({ playerId, x, y, gameId }) => {
         const game = games[gameId];
         if (!game) return;
+
+        game.totalBombsPlaced = (game.totalBombsPlaced|| 0) + 1;
+        const player = game.players.find(p => p.id === playerId);
+        player.totalBombsPlaced = ( player.totalBombsPlaced || 0) + 1;
 
         socket.to(game.room).emit("bombPlaced", { x, y });
     });
@@ -332,6 +340,8 @@ io.on("connection", (socket) => {
             if (cell.type === 'BLOCK') {
                 score += 10;
                 cell.type = 'EMPTY';
+                game.totalBlocksDestroyed = (game.totalBlocksDestroyed|| 0) + 1;
+                player.totalBlocksDestroyed = ( player.totalBlocksDestroyed|| 0) + 1;
             }
         }
 
@@ -354,7 +364,6 @@ io.on("connection", (socket) => {
         if (eliminatedPlayer) {
             eliminatedPlayer.dead = true;
             eliminatedPlayer.timeAlive = game.timeLeft;
-            checkForWinner(game);
         }
 
         const killerPlayer = game.players.find(p => p.id === killerId);
@@ -372,6 +381,8 @@ io.on("connection", (socket) => {
             killerPlayer.score = (killerPlayer.score || 0) + 25;
             killerPlayer.kills = (killerPlayer.kills || 0) + 1;
         }
+        checkForWinner(game);
+        game.kills = (game.kills|| 0) + 1;
 
         //No estamos borrando al jugador del game.players, sino que estamos solamente cambiando su estado a dead=true
         io.in(game.room).emit("players", game.players); // Actualizamos barra lateral
