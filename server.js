@@ -390,6 +390,10 @@ io.on("connection", (socket) => {
     
     function checkForWinner(gameId, game) {
         const alivePlayers = game.players.filter(p => !p.dead && !p.leftGame);
+
+        if (alivePlayers > 1 ||  game.timeLeft > 0){
+            return false;
+        }
         
         if (alivePlayers.length === 0) {
 
@@ -432,7 +436,7 @@ io.on("connection", (socket) => {
     function handleWinnerResult(gameId, game, result) {
         if (result.winner) {
             io.in(game.room).emit("gameOver", {
-                winners: [result.winner.id],
+                winner: [result.winner.id],
                 winnerUsernames: [result.winner.username],
                 reason: result.reason
             });
@@ -505,16 +509,19 @@ io.on("connection", (socket) => {
             finalists[0].winner = true;
             finalists[0].playerRank = 1;
             return { winner: finalists[0], reason };
-        } else {
+
+        } else if (finalists.length > 1){
             finalists.forEach(p => {
                 p.winner = true;
                 p.playerRank = 1;
             });
             return { winners: finalists, reason: "Empate entre jugadores con los mismos criterios" };
         }
+        return 
     }
 
     async function finishGame(gameId, game) {
+        console.log(gameId);
         const gameFinal= {
             id : gameId,
             players : game.players,
