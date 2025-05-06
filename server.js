@@ -265,7 +265,7 @@ io.on("connection", (socket) => {
                                     player.timeAlive = totalTime;
                                 }
                             });                  
-                            checkForWinner(game);
+                            checkForWinner(gameId, game);
                         }
                     }, 1000);
                 }
@@ -381,20 +381,20 @@ io.on("connection", (socket) => {
             killerPlayer.score = (killerPlayer.score || 0) + 25;
             killerPlayer.kills = (killerPlayer.kills || 0) + 1;
         }
-        checkForWinner(game);
+        checkForWinner(gameId, game);
         game.kills = (game.kills|| 0) + 1;
 
         //No estamos borrando al jugador del game.players, sino que estamos solamente cambiando su estado a dead=true
         io.in(game.room).emit("players", game.players); // Actualizamos barra lateral
     });
     
-    function checkForWinner(game) {
-        const alivePlayers = game.players.filter(p => !p.dead);
+    function checkForWinner(gameId, game) {
+        const alivePlayers = game.players.filter(p => !p.dead && !p.leftGame);
         
         if (alivePlayers.length === 0) {
 
             const result = determineWinner(game.players.filter(p => p.dead));
-            handleWinnerResult(game, result);
+            handleWinnerResult(gameId,game, result);
             assignPlayerRanks(game);
             console.log("1", result);
             return true;
@@ -402,7 +402,7 @@ io.on("connection", (socket) => {
 
         if (game.timeLeft === 0) {
             const result = determineWinner(alivePlayers);
-            handleWinnerResult(game, result);
+            handleWinnerResult(gameId, game, result);
             assignPlayerRanks(game);
             console.log("3", result);
             return true;
@@ -419,25 +419,24 @@ io.on("connection", (socket) => {
                 game.timerInterval = null;
             }
             const result = determineWinner(alivePlayers);
-            handleWinnerResult(game, result);
+            handleWinnerResult(gameId, game, result);
             assignPlayerRanks(game);
             console.log("2", result);
             return true;
         }
-
-        
         return false;
     }
 
 
     // Anunciar el ganador o ganadores
-    function handleWinnerResult(game, result) {
+    function handleWinnerResult(gameId, game, result) {
         if (result.winner) {
             io.in(game.room).emit("gameOver", {
                 winners: [result.winner.id],
                 winnerUsernames: [result.winner.username],
                 reason: result.reason
             });
+            
         } else {
             io.in(game.room).emit("gameOver", {
                 winners: result.winners.map(p => p.id),
@@ -445,14 +444,16 @@ io.on("connection", (socket) => {
                 reason: result.reason
             });
         }
+        finishGame(gameId,game);
     }
 
     // Asignamos las posiciones finales
 
     function assignPlayerRanks(game) {
         const players = game.players;
+
         // Filtra jugadores que no son ganadores
-        const nonWinners = players.filter(p => !p.winner);
+        const nonWinners = players.filter(p => !p.winner && !p.leftGame);
     
         // Ordena por tiempo de vida descendente
         const sorted = [...nonWinners].sort((a, b) => (b.timeAlive || 0) - (a.timeAlive || 0));
@@ -479,6 +480,8 @@ io.on("connection", (socket) => {
 
     function determineWinner(players) {
         // Paso 1: Mayor tiempo de vida
+        players = players.filter(p => !p.leftGame);
+
         const longestSurvivalTime = Math.max(...players.map(p => p.timeAlive || 0));
         let finalists = players.filter(p => p.timeAlive === longestSurvivalTime);
         let reason = "Mayor tiempo de vida";
@@ -508,6 +511,29 @@ io.on("connection", (socket) => {
                 p.playerRank = 1;
             });
             return { winners: finalists, reason: "Empate entre jugadores con los mismos criterios" };
+        }
+    }
+
+    async function finishGame(gameId, game) {
+        const gameFinal= {
+            id : gameId,
+            players : game.players,
+            board : game.board,
+            totalBombsPlaced : (game.totalBombsPlaced || 0),
+            totalBlocksDestroyed :(game.totalBlocksDestroyed || 0),
+            totalMoves: (game.totalMoves || 0),
+            kills : (game.kills || 0)
+        }
+        console.log(gameFinal);
+        try {
+          const response = await axios.put(`http://localhost:8080/games/${gameId}/finish`, gameFinal, {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log('Game finalized successfully:', response.status);
+        } catch (error) {
+          console.error('Error finishing game:', error.response?.status, error.response?.data);
         }
     }
     
@@ -558,9 +584,10 @@ io.on("connection", (socket) => {
         const player = game.players.find(p => p.id === playerId);
         if (player) {
             player.dead = true;
-            checkForWinner(game);
+            player.timeAlive = game.timeLeft;
+            player.leftGame = true;
+            checkForWinner(gameId, game);
         }
-
         // Notificar al resto
         io.in(game.room).emit("players", game.players);
         io.in(game.room).emit("playerLeft", { playerId }); // útil si quieres animación futura
