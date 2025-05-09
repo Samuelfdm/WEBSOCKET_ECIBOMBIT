@@ -396,19 +396,14 @@ io.on("connection", (socket) => {
         }
         
         if (alivePlayers.length === 0) {
-
             const result = determineWinner(game.players.filter(p => p.dead));
             handleWinnerResult(gameId,game, result);
-            assignPlayerRanks(game);
-            
             return true;
         }
 
         if (game.timeLeft === 0) {
             const result = determineWinner(alivePlayers);
             handleWinnerResult(gameId, game, result);
-            assignPlayerRanks(game);
-            
             return true;
         }
  
@@ -424,8 +419,6 @@ io.on("connection", (socket) => {
             }
             const result = determineWinner(alivePlayers);
             handleWinnerResult(gameId, game, result);
-            assignPlayerRanks(game);
-
             return true;
         }
         return false;
@@ -445,19 +438,28 @@ io.on("connection", (socket) => {
         }
     
         if (result.winner) {
+            result.winner.winner = true;
+            result.winner.playerRank = 1;
             io.in(game.room).emit("gameOver", {
                 winners: [result.winner.id],
                 winnerUsernames: [result.winner.username],
                 reason: result.reason
             });
+
         } else {
             io.in(game.room).emit("gameOver", {
                 winners: result.winners.map(p => p.id),
                 winnerUsernames: result.winners.map(p => p.username),
                 reason: result.reason
             });
+            result.winners.forEach(p => {
+                p.winner = true
+                p.playerRank = 1; 
+            }
+            );
         }
-    
+        
+        assignPlayerRanks(game);
         finishGame(gameId, game);
     }
     
