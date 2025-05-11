@@ -1,7 +1,7 @@
 const axios = require("axios");
 const { Server } = require("socket.io");
 const io = new Server(3000, { cors: { origin: "*" } });
-
+const backendApi = process.env.BACKEND_URL || 'http://localhost:8080';
 let rooms = {};
 let games = {};
 
@@ -172,7 +172,7 @@ io.on("connection", (socket) => {
         }
 
         try {
-            const response = await axios.post("http://localhost:8080/games/create", {
+            const response = await axios.post(`${backendApi}/games/create`, {
                 roomId: room,
                 config,
                 players
@@ -273,7 +273,6 @@ io.on("connection", (socket) => {
 
         return callback?.({ success: true });
     });
-
 
     socket.on("move", ({ direction, playerId, xa, ya, x, y, gameId }) => {
         const game = games[gameId];
@@ -430,7 +429,6 @@ io.on("connection", (socket) => {
 
         return false;
     }
-
 
     socket.on("selectCharacter", ({ room, character }) => {
         if (rooms[room]) {

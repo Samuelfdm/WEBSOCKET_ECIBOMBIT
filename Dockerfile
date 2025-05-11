@@ -1,7 +1,8 @@
 # Dockerfile - websocket-server
-FROM node:20
+FROM node:20-alpine
 WORKDIR /app
-COPY . .
+COPY package.json package-lock.json ./
 RUN npm install
-EXPOSE 3001
-CMD ["node", "index.js"]
+COPY . .
+EXPOSE 3000
+CMD ["node", "server.js"]
