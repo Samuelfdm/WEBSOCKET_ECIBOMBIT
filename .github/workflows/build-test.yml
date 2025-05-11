@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main", "develop" ]
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,18 +29,21 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          auth-type: 'oidc'
+          token: ${{ secrets.ACTIONS_ID_TOKEN }}
 
       - name: Build and push Docker image
         run: |
           docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:latest .
           docker push ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:latest
+
   sonarcloud:
     needs: build
     uses: ZayraGS1403/central-pipelines/.github/workflows/sonarcloud-analysis.yml@v0.1.1
     with:
-      node-version: '20'
+      java-version: '21'
       branch-name: ${{ github.ref_name }}
-      secrets:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-        SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
