@@ -39,7 +39,7 @@ io.on("connection", (socket) => {
             players: {},
             ready: {},
             characters: {},
-            owner: null, // sin owner inicialmente
+            owner: null,
             gameStarted: false,
             config: {
                 map: "default",
