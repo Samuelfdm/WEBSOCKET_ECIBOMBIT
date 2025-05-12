@@ -1,4 +1,4 @@
-name: Build and Push - Websocket EciBombit
+name: Build and Deploy - Websocket EciBombit
 
 on:
   push:
@@ -7,43 +7,93 @@ on:
     branches: [ "main", "develop" ]
 
 permissions:
+  contents: write
+  actions: write
   id-token: write
-  contents: read
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  RESOURCE_GROUP: BOMBIT-RG
+  CONTAINER_APP_NAME: ws-server
+  CONTAINER_APP_ENV: bombit-env
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set_output.outputs.image_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm install
 
-      - name: Login to Azure Container Registry
+      - name: Azure Login (OIDC)
         uses: azure/login@v1
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          auth-type: 'oidc'
-          token: ${{ secrets.ACTIONS_ID_TOKEN }}
 
       - name: Build and push Docker image
-        run: |
-          docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:latest .
-          docker push ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:latest
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ secrets.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.AZURE_CLIENT_ID }}
+          password: ${{ secrets.AZURE_CLIENT_SECRET }}
 
-  sonarcloud:
+      - name: Build and push
+        run: |
+          docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:${{ github.sha }} .
+          docker push ${{ secrets.ACR_NAME }}.azurecr.io/ws-server:${{ github.sha }}
+          echo "image_tag=${{ github.sha }}" >> $GITHUB_ENV
+
+  deploy:
     needs: build
-    uses: ZayraGS1403/central-pipelines/.github/workflows/sonarcloud-analysis.yml@v0.1.1
-    with:
-      java-version: '21'
-      branch-name: ${{ github.ref_name }}
-    secrets:
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
-      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+    runs-on: ubuntu-latest
+    env:
+      image_tag: ${{ needs.build.outputs.image_tag }}
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure Container App
+        uses: azure/CLI@v1
+        with:
+          azcliversion: "2.72.0"
+          inlineScript: |
+            az containerapp update \
+              --name ${{ env.CONTAINER_APP_NAME }} \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --image ${{ env.ACR_NAME }}.azurecr.io/ws-server:${{ env.image_tag }} \
+              --target-port 3000 \
+              --ingress external \
+              --transport tcp \
+              --health-probe-protocol tcp \
+              --health-probe-port 3000 \
+              --health-probe-interval 10 \
+              --set-env-vars \
+                FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
+                BACKEND_URL=${{ secrets.BACKEND_URL }} \
+                WEBSOCKET_URL=${{ secrets.WEBSOCKET_URL }}
+
+#  sonarcloud:
+#    needs: deploy
+#    uses: ZayraGS1403/central-pipelines/.github/workflows/sonarcloud-analysis.yml@v0.1.1
+#    with:
+#      node-version: '20'
+#      branch-name: ${{ github.ref_name }}
+#    secrets:
+#      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+#      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+#      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
