@@ -76,12 +76,6 @@ jobs:
               --name ${{ env.CONTAINER_APP_NAME }} \
               --resource-group ${{ env.RESOURCE_GROUP }} \
               --image ${{ env.ACR_NAME }}.azurecr.io/ws-server:${{ env.image_tag }} \
-              --target-port 3000 \
-              --ingress external \
-              --transport tcp \
-              --health-probe-protocol tcp \
-              --health-probe-port 3000 \
-              --health-probe-interval 10 \
               --set-env-vars \
                 FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
                 BACKEND_URL=${{ secrets.BACKEND_URL }} \
