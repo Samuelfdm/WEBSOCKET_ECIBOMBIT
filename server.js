@@ -257,10 +257,14 @@ io.on("connection", (socket) => {
                         } else {
                             clearInterval(game.timerInterval);
                             game.timerInterval = null;
-
                             io.in(game.room).emit("gameTimerTick", { timeLeft: 0 });
-
-                            checkForWinner(game);
+                            const totalTime = game.config.time * 60;
+                            game.players.forEach(player => {
+                                if (!player.dead) {
+                                    player.timeAlive = totalTime;
+                                }
+                            });
+                            checkForWinner(gameId, game);
                         }
                     }, 1000);
                 }
@@ -290,6 +294,10 @@ io.on("connection", (socket) => {
                 beforeCell.type = 'EMPTY';
             }
 
+            game.totalMoves = (game.totalMoves|| 0) + 1;
+            const player = game.players.find(p => p.id === playerId);
+            player.totalMoves = ( player.totalMoves || 0) + 1;
+
             socket.to(game.room).emit("playerMoved", {
                 playerId,
                 direction,
@@ -302,6 +310,10 @@ io.on("connection", (socket) => {
     socket.on("bombPlaced", ({ playerId, x, y, gameId }) => {
         const game = games[gameId];
         if (!game) return;
+
+        game.totalBombsPlaced = (game.totalBombsPlaced|| 0) + 1;
+        const player = game.players.find(p => p.id === playerId);
+        player.totalBombsPlaced = ( player.totalBombsPlaced || 0) + 1;
 
         socket.to(game.room).emit("bombPlaced", { x, y });
     });
@@ -326,11 +338,12 @@ io.on("connection", (socket) => {
             if (cell.type === 'BLOCK') {
                 score += 10;
                 cell.type = 'EMPTY';
+                game.totalBlocksDestroyed = (game.totalBlocksDestroyed|| 0) + 1;
+                player.totalBlocksDestroyed = ( player.totalBlocksDestroyed|| 0) + 1;
             }
         }
 
         player.score = (player.score || 0) + score;
-        checkForWinner(game);
         io.in(game.room).emit("players", game.players);
     });
 
@@ -347,11 +360,8 @@ io.on("connection", (socket) => {
 
         const eliminatedPlayer = game.players.find(p => p.id === victimId);
         if (eliminatedPlayer) {
-            const previouslyAlive = game.players.filter(p => !p.dead).length;
             eliminatedPlayer.dead = true;
-            const currentlyAlive = game.players.filter(p => !p.dead).length;
-            const simultaneousDeath = previouslyAlive === 2 && currentlyAlive === 0;
-            checkForWinner(game, simultaneousDeath);
+            eliminatedPlayer.timeAlive = game.timeLeft;
         }
 
         const killerPlayer = game.players.find(p => p.id === killerId);
@@ -369,66 +379,183 @@ io.on("connection", (socket) => {
             killerPlayer.score = (killerPlayer.score || 0) + 25;
             killerPlayer.kills = (killerPlayer.kills || 0) + 1;
         }
+        game.kills = (game.kills|| 0) + 1;
+        checkForWinner(gameId, game);
+
 
         //No estamos borrando al jugador del game.players, sino que estamos solamente cambiando su estado a dead=true
         io.in(game.room).emit("players", game.players); // Actualizamos barra lateral
     });
 
-    function checkForWinner(game, simultaneousDeath = false) {
+    function checkForWinner(gameId, game) {
+        const alivePlayers = game.players.filter(p => !p.dead && !p.leftGame);
 
-        const alivePlayers = game.players.filter(p => !p.dead);
+        if (alivePlayers > 1 &&  game.timeLeft > 0){
+            return true;
+        }
 
         if (alivePlayers.length === 0) {
-            if (game.timerInterval) {
-                clearInterval(game.timerInterval);
-                game.timerInterval = null;
-            }
+            const result = determineWinner(game.players.filter(p => p.dead));
+            handleWinnerResult(gameId,game, result);
+            return true;
+        }
 
-            io.in(game.room).emit("gameOver", {
-                winner: null,
-                reason: simultaneousDeath
-                    ? "Todos los jugadores vivos murieron al mismo tiempo."
-                    : "Todos los jugadores han sido eliminados."
-            });
-
+        if (game.timeLeft === 0) {
+            const result = determineWinner(alivePlayers);
+            handleWinnerResult(gameId, game, result);
             return true;
         }
 
         if (alivePlayers.length === 1) {
             // Solo queda uno vivo
+            const player = alivePlayers[0];
+            game.config.time = game.config.time - (game.timeLeft/60);
+            player.timeAlive = game.config.time * 60
+
             if (game.timerInterval) {
                 clearInterval(game.timerInterval);
                 game.timerInterval = null;
             }
-
-            console.log(alivePlayers.map(p => p.id));
-            io.in(game.room).emit("gameOver", {
-                winners: alivePlayers.map(p => p.id),
-                winnerUserNames: alivePlayers.map(p => p.username),
-                reason: "Último jugador con vida."
-
-            });
+            const result = determineWinner(alivePlayers);
+            handleWinnerResult(gameId, game, result);
             return true;
         }
-
-        if (game.timeLeft === 0) {
-            const topScore = Math.max(...alivePlayers.map(p => p.score || 0));
-            const topPlayers = alivePlayers.filter(p => (p.score || 0) === topScore);
-
-            const isTie = topPlayers.length > 1;
-            console.log(topPlayers.map(p => p.id));
-            io.in(game.room).emit("gameOver", {
-                winners: topPlayers.map(p => p.id),
-                winnerUsernames: topPlayers.map(p => p.username),
-                reason: isTie
-                    ? "Empate entre jugadores con el mayor puntaje."
-                    : "Mayor puntaje al finalizar el tiempo."
-            });
-            return true;
-        }
-
         return false;
     }
+
+
+    // Anunciar el ganador o ganadores
+    function handleWinnerResult(gameId, game, result) {
+        if (!result || (result.winners?.length === 0 && !result.winner)) {
+            io.in(game.room).emit("gameOver", {
+                winners: [],
+                winnerUsernames: [],
+                reason: "No se pudo determinar un ganador"
+            });
+            finishGame(gameId, game);
+            return;
+        }
+
+        if (result.winner) {
+            result.winner.winner = true;
+            result.winner.playerRank = 1;
+            io.in(game.room).emit("gameOver", {
+                winners: [result.winner.id],
+                winnerUsernames: [result.winner.username],
+                reason: result.reason
+            });
+
+        } else {
+            io.in(game.room).emit("gameOver", {
+                winners: result.winners.map(p => p.id),
+                winnerUsernames: result.winners.map(p => p.username),
+                reason: result.reason
+            });
+            result.winners.forEach(p => {
+                p.winner = true
+                p.playerRank = 1;
+            }
+            );
+        }
+
+        assignPlayerRanks(game);
+        finishGame(gameId, game);
+    }
+
+
+    // Asignamos las posiciones finales
+
+    function assignPlayerRanks(game) {
+        const players = game.players;
+
+        // Filtra jugadores que no son ganadores
+        const nonWinners = players.filter(p => !p.winner && !p.leftGame);
+
+        // Ordena por tiempo de vida descendente
+        const sorted = [...nonWinners].sort((a, b) => (b.timeAlive || 0) - (a.timeAlive || 0));
+
+        let rank = 2;
+        for (let i = 0; i < sorted.length && rank <= 4; i++) {
+            if (i > 0 && (sorted[i].timeAlive || 0) < (sorted[i - 1].timeAlive || 0)) {
+                rank++;
+            }
+            if (rank <= 4) {
+                sorted[i].playerRank = rank;
+            }
+        }
+    }
+
+
+
+    /*Se revisa las posibles formas de evitar el empate y dictaminar un ganador
+    la revision se hace en el siguiente orden
+    tiempoVida -> MayorPuntaje -> Mayor#Muertes (Si es nulo se declara como ganador
+    o ganadores el resultado que obtuvimos de mayor numero de muertes)
+        Si queda dos o mas jugadores despues de estas condiciones se declara un empate
+    */
+
+        function determineWinner(players) {
+            players = players.filter(p => !p.leftGame);
+
+            if (players.length === 0) {
+                return { winners: [], reason: "Sin jugadores disponibles" };
+            }
+
+            const longestSurvivalTime = Math.max(...players.map(p => p.timeAlive || 0));
+            let finalists = players.filter(p => p.timeAlive === longestSurvivalTime);
+            let reason = "Mayor tiempo de vida";
+
+            if (finalists.length > 1) {
+                const highestScore = Math.max(...finalists.map(p => p.score || 0));
+                finalists = finalists.filter(p => (p.score || 0) === highestScore);
+                reason = "Mayor puntaje";
+            }
+
+            if (finalists.length > 1) {
+                const highestKills = Math.max(...finalists.map(p => p.kills || 0));
+                finalists = finalists.filter(p => (p.kills || 0) === highestKills);
+                reason = "Mayor cantidad de muertes";
+            }
+
+            if (finalists.length === 1) {
+                finalists[0].winner = true;
+                finalists[0].playerRank = 1;
+                return { winner: finalists[0], reason };
+            } else {
+                finalists.forEach(p => {
+                    p.winner = true;
+                    p.playerRank = 1;
+                });
+                return { winners: finalists, reason: "Empate entre jugadores con los mismos criterios" };
+            }
+        }
+
+
+    async function finishGame(gameId, game) {
+        console.log(gameId);
+        const gameFinal= {
+            id : gameId,
+            players : game.players,
+            board : game.board,
+            totalBombsPlaced : (game.totalBombsPlaced || 0),
+            totalBlocksDestroyed :(game.totalBlocksDestroyed || 0),
+            totalMoves: (game.totalMoves || 0),
+            kills : (game.kills || 0)
+        }
+        try {
+          const response = await axios.put(`http://localhost:8080/games/${gameId}/finish`, gameFinal, {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          });
+          console.log('Game finalized successfully:', response.status);
+        } catch (error) {
+          console.error('Error finishing game:', error.response?.status, error.response?.data);
+        }
+    }
+
+
+
 
     socket.on("selectCharacter", ({ room, character }) => {
         if (rooms[room]) {
@@ -463,6 +590,7 @@ io.on("connection", (socket) => {
 
     socket.on("leaveGame", ({ gameId, playerId, x, y }, callback) => {
         const game = games[gameId];
+
         if (!game) return callback?.({ success: false });
 
         const cell = game.board.cells.find(c => c.x === x && c.y === y);
@@ -474,8 +602,10 @@ io.on("connection", (socket) => {
         const player = game.players.find(p => p.id === playerId);
         if (player) {
             player.dead = true;
+            player.timeAlive = game.timeLeft;
+            player.leftGame = true;
+            checkForWinner(gameId, game);
         }
-
         // Notificar al resto
         io.in(game.room).emit("players", game.players);
         io.in(game.room).emit("playerLeft", { playerId }); // útil si quieres animación futura
