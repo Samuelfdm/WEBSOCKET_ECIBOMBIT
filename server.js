@@ -1,7 +1,7 @@
 const axios = require("axios");
 const { Server } = require("socket.io");
 const io = new Server(3000, { cors: { origin: "*" } });
-
+const backendApi = process.env.BACKEND_URL || 'http://localhost:8080';
 let rooms = {};
 let games = {};
 
@@ -39,7 +39,7 @@ io.on("connection", (socket) => {
             players: {},
             ready: {},
             characters: {},
-            owner: null, // sin owner inicialmente
+            owner: null,
             gameStarted: false,
             config: {
                 map: "default",
@@ -172,7 +172,7 @@ io.on("connection", (socket) => {
         }
 
         try {
-            const response = await axios.post("http://localhost:8080/games/create", {
+            const response = await axios.post(`${backendApi}/games/create`, {
                 roomId: room,
                 config,
                 players
@@ -232,10 +232,10 @@ io.on("connection", (socket) => {
 
         if (game.connectedPlayers === game.players.length) {
             let countdown = 3;
-        
+
             // Initial countdown
             io.in(game.room).emit("startTimerGame", { countdown });
-        
+
             const countdownInterval = setInterval(() => {
                 countdown--;
                 if (countdown > 0) {
@@ -243,23 +243,23 @@ io.on("connection", (socket) => {
                 } else {
                     clearInterval(countdownInterval);
                     io.in(game.room).emit("startGame");
-        
+
                     // Game duration timer
                     game.timeLeft = game.config.time * 60;
-        
+
                     io.in(game.room).emit("gameTimerTick", {  timeLeft: game.timeLeft});
-        
+
                     game.timerInterval = setInterval(() => {
                         game.timeLeft--;
-                        
+
                         if (game.timeLeft > 0) {
                             io.in(game.room).emit("gameTimerTick", { timeLeft: game.timeLeft });
                         } else {
                             clearInterval(game.timerInterval);
                             game.timerInterval = null;
-                    
+
                             io.in(game.room).emit("gameTimerTick", { timeLeft: 0 });
-                    
+
                             checkForWinner(game);
                         }
                     }, 1000);
@@ -273,7 +273,6 @@ io.on("connection", (socket) => {
 
         return callback?.({ success: true });
     });
-
 
     socket.on("move", ({ direction, playerId, xa, ya, x, y, gameId }) => {
         const game = games[gameId];
@@ -394,7 +393,7 @@ io.on("connection", (socket) => {
 
             return true;
         }
-    
+
         if (alivePlayers.length === 1) {
             // Solo queda uno vivo
             if (game.timerInterval) {
@@ -407,11 +406,11 @@ io.on("connection", (socket) => {
                 winners: alivePlayers.map(p => p.id),
                 winnerUserNames: alivePlayers.map(p => p.username),
                 reason: "Último jugador con vida."
-                
+
             });
             return true;
         }
-    
+
         if (game.timeLeft === 0) {
             const topScore = Math.max(...alivePlayers.map(p => p.score || 0));
             const topPlayers = alivePlayers.filter(p => (p.score || 0) === topScore);
@@ -427,10 +426,9 @@ io.on("connection", (socket) => {
             });
             return true;
         }
-    
+
         return false;
     }
-    
 
     socket.on("selectCharacter", ({ room, character }) => {
         if (rooms[room]) {
