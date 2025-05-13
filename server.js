@@ -381,8 +381,9 @@ io.on("connection", (socket) => {
             killerPlayer.score = (killerPlayer.score || 0) + 25;
             killerPlayer.kills = (killerPlayer.kills || 0) + 1;
         }
-        checkForWinner(gameId, game);
         game.kills = (game.kills|| 0) + 1;
+        checkForWinner(gameId, game);
+        
 
         //No estamos borrando al jugador del game.players, sino que estamos solamente cambiando su estado a dead=true
         io.in(game.room).emit("players", game.players); // Actualizamos barra lateral
