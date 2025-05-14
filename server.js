@@ -1,7 +1,8 @@
 const axios = require("axios");
 const { Server } = require("socket.io");
 const io = new Server(3000, { cors: { origin: "*" } });
-const backendApi = process.env.BACKEND_URL || 'http://localhost:8080';
+//const backendApi = 'http://localhost:8080';
+const backendApi = 'https://backend.proudwave-8afe962a.eastus.azurecontainerapps.io';
 let rooms = {};
 let games = {};
 
@@ -423,7 +424,6 @@ io.on("connection", (socket) => {
         return false;
     }
 
-
     // Anunciar el ganador o ganadores
     function handleWinnerResult(gameId, game, result) {
         if (!result || (result.winners?.length === 0 && !result.winner)) {
@@ -462,9 +462,7 @@ io.on("connection", (socket) => {
         finishGame(gameId, game);
     }
 
-
     // Asignamos las posiciones finales
-
     function assignPlayerRanks(game) {
         const players = game.players;
 
@@ -485,51 +483,47 @@ io.on("connection", (socket) => {
         }
     }
 
-
-
-    /*Se revisa las posibles formas de evitar el empate y dictaminar un ganador
-    la revision se hace en el siguiente orden
-    tiempoVida -> MayorPuntaje -> Mayor#Muertes (Si es nulo se declara como ganador
-    o ganadores el resultado que obtuvimos de mayor numero de muertes)
+    /*  Se revisa las posibles formas de evitar el empate y dictaminar un ganador
+        la revision se hace en el siguiente orden
+        tiempoVida -> MayorPuntaje -> Mayor#Muertes (Si es nulo se declara como ganador
+        o ganadores el resultado que obtuvimos de mayor numero de muertes)
         Si queda dos o mas jugadores despues de estas condiciones se declara un empate
     */
+    function determineWinner(players) {
+        players = players.filter(p => !p.leftGame);
 
-        function determineWinner(players) {
-            players = players.filter(p => !p.leftGame);
-
-            if (players.length === 0) {
-                return { winners: [], reason: "Sin jugadores disponibles" };
-            }
-
-            const longestSurvivalTime = Math.max(...players.map(p => p.timeAlive || 0));
-            let finalists = players.filter(p => p.timeAlive === longestSurvivalTime);
-            let reason = "Mayor tiempo de vida";
-
-            if (finalists.length > 1) {
-                const highestScore = Math.max(...finalists.map(p => p.score || 0));
-                finalists = finalists.filter(p => (p.score || 0) === highestScore);
-                reason = "Mayor puntaje";
-            }
-
-            if (finalists.length > 1) {
-                const highestKills = Math.max(...finalists.map(p => p.kills || 0));
-                finalists = finalists.filter(p => (p.kills || 0) === highestKills);
-                reason = "Mayor cantidad de muertes";
-            }
-
-            if (finalists.length === 1) {
-                finalists[0].winner = true;
-                finalists[0].playerRank = 1;
-                return { winner: finalists[0], reason };
-            } else {
-                finalists.forEach(p => {
-                    p.winner = true;
-                    p.playerRank = 1;
-                });
-                return { winners: finalists, reason: "Empate entre jugadores con los mismos criterios" };
-            }
+        if (players.length === 0) {
+            return { winners: [], reason: "Sin jugadores disponibles" };
         }
 
+        const longestSurvivalTime = Math.max(...players.map(p => p.timeAlive || 0));
+        let finalists = players.filter(p => p.timeAlive === longestSurvivalTime);
+        let reason = "Mayor tiempo de vida";
+
+        if (finalists.length > 1) {
+            const highestScore = Math.max(...finalists.map(p => p.score || 0));
+            finalists = finalists.filter(p => (p.score || 0) === highestScore);
+            reason = "Mayor puntaje";
+        }
+
+        if (finalists.length > 1) {
+            const highestKills = Math.max(...finalists.map(p => p.kills || 0));
+            finalists = finalists.filter(p => (p.kills || 0) === highestKills);
+            reason = "Mayor cantidad de muertes";
+        }
+
+        if (finalists.length === 1) {
+            finalists[0].winner = true;
+            finalists[0].playerRank = 1;
+            return { winner: finalists[0], reason };
+        } else {
+            finalists.forEach(p => {
+                p.winner = true;
+                p.playerRank = 1;
+            });
+            return { winners: finalists, reason: "Empate entre jugadores con los mismos criterios" };
+        }
+    }
 
     async function finishGame(gameId, game) {
         console.log(gameId);
@@ -543,7 +537,7 @@ io.on("connection", (socket) => {
             kills : (game.kills || 0)
         }
         try {
-          const response = await axios.put(`http://localhost:8080/games/${gameId}/finish`, gameFinal, {
+          const response = await axios.put(`${backendApi}/games/${gameId}/finish`, gameFinal, {
             headers: {
               'Content-Type': 'application/json'
             }
@@ -553,9 +547,6 @@ io.on("connection", (socket) => {
           console.error('Error finishing game:', error.response?.status, error.response?.data);
         }
     }
-
-
-
 
     socket.on("selectCharacter", ({ room, character }) => {
         if (rooms[room]) {
