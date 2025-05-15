@@ -426,8 +426,16 @@ io.on("connection", (socket) => {
 
     // Anunciar el ganador o ganadores
     function handleWinnerResult(gameId, game, result) {
+        const sendGameOverTo = (players, payload) => {
+            players.forEach(p => {
+                if (!p.leftGame && p.socketId) {
+                    io.to(p.socketId).emit("gameOver", payload);
+                }
+            });
+        };
+
         if (!result || (result.winners?.length === 0 && !result.winner)) {
-            io.in(game.room).emit("gameOver", {
+            sendGameOverTo(game.players, {
                 winners: [],
                 winnerUsernames: [],
                 reason: "No se pudo determinar un ganador"
@@ -439,23 +447,21 @@ io.on("connection", (socket) => {
         if (result.winner) {
             result.winner.winner = true;
             result.winner.playerRank = 1;
-            io.in(game.room).emit("gameOver", {
+            sendGameOverTo(game.players, {
                 winners: [result.winner.id],
                 winnerUsernames: [result.winner.username],
                 reason: result.reason
             });
-
         } else {
-            io.in(game.room).emit("gameOver", {
+            result.winners.forEach(p => {
+                p.winner = true;
+                p.playerRank = 1;
+            });
+            sendGameOverTo(game.players, {
                 winners: result.winners.map(p => p.id),
                 winnerUsernames: result.winners.map(p => p.username),
                 reason: result.reason
             });
-            result.winners.forEach(p => {
-                p.winner = true
-                p.playerRank = 1;
-            }
-            );
         }
 
         assignPlayerRanks(game);
@@ -581,7 +587,6 @@ io.on("connection", (socket) => {
 
     socket.on("leaveGame", ({ gameId, playerId, x, y }, callback) => {
         const game = games[gameId];
-
         if (!game) return callback?.({ success: false });
 
         const cell = game.board.cells.find(c => c.x === x && c.y === y);
@@ -593,15 +598,16 @@ io.on("connection", (socket) => {
         const player = game.players.find(p => p.id === playerId);
         if (player) {
             player.dead = true;
-            player.timeAlive = game.timeLeft;
             player.leftGame = true;
-            checkForWinner(gameId, game);
+            player.timeAlive = game.timeLeft;
         }
-        // Notificar al resto
-        io.in(game.room).emit("players", game.players);
-        io.in(game.room).emit("playerLeft", { playerId }); // útil si quieres animación futura
 
-        // También limpiar de la sala si sigue registrada
+        socket.leave(game.room);
+        checkForWinner(gameId, game);
+
+        io.in(game.room).emit("players", game.players);
+        io.in(game.room).emit("playerLeft", { playerId });
+
         const roomId = game.room;
         const room = rooms[roomId];
         if (room) {
@@ -622,12 +628,18 @@ io.on("connection", (socket) => {
             if (player && !player.dead) {
                 console.log(`Desconexión detectada. Eliminando ${socket.id} del juego ${gameId}`);
                 player.dead = true;
+                player.leftGame = true; // << IMPORTANTE
+                player.timeAlive = game.timeLeft;
+
                 const playerId = player.id;
                 const cell = game.board.cells.find(c => c.playerId === player.id);
                 if (cell) {
                     cell.playerId = null;
                     cell.type = 'EMPTY';
                 }
+
+                checkForWinner(gameId, game);
+
                 io.to(game.room).emit("players", game.players);
                 io.in(game.room).emit("playerLeft", { playerId });
             }
@@ -640,6 +652,7 @@ io.on("connection", (socket) => {
                 delete room.players[socket.id];
                 delete room.ready[socket.id];
                 delete room.characters[socket.id];
+
                 if (room.owner === socket.id) {
                     io.to(roomName).emit("roomClosed", { message: "El dueño de la sala salió." });
                     delete rooms[roomName];
