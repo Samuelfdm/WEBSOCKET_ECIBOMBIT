@@ -536,7 +536,7 @@ io.on("connection", (socket) => {
     }
 
     async function finishGame(gameId, game) {
-        console.log(gameId);
+        console.log("SOLICITUD DE FINALIZAR JUEGO CON JUEGO: "+gameId+" "+game.players);
         const gameFinal= {
             id : gameId,
             players : game.players,
