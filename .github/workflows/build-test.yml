@@ -90,7 +90,6 @@ jobs:
     needs: deploy
     uses: ZayraGS1403/central-pipelines/.github/workflows/sonarcloud-analysis.yml@v0.1.1
     with:
-      node-version: '20'
       branch-name: ${{ github.ref_name }}
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
