@@ -1,12 +1,16 @@
 const axios = require("axios");
 const { Server } = require("socket.io");
 const io = new Server(3000, { cors: { origin: "*" } });
-//const backendApi = 'http://localhost:8080';
-const backendApi = 'https://backend.proudwave-8afe962a.eastus.azurecontainerapps.io';
+require("dotenv").config();
+const backendApi = process.env.BACKEND_URL;
 let rooms = {};
 let games = {};
 
+console.log("BACKEND API URL ANTES DE CONEXION: "+backendApi);
+
 io.on("connection", (socket) => {
+
+    console.log("BACKEND API URL DESPUES DE CONEXION: "+backendApi);
 
     socket.on("getRooms", () => {
         socket.emit("roomsList", Object.keys(rooms));
