@@ -263,10 +263,9 @@ io.on("connection", (socket) => {
                             clearInterval(game.timerInterval);
                             game.timerInterval = null;
                             io.in(game.room).emit("gameTimerTick", { timeLeft: 0 });
-                            const totalTime = game.config.time * 60;
                             game.players.forEach(player => {
                                 if (!player.dead) {
-                                    player.timeAlive = totalTime;
+                                    player.timeAlive = game.timeLeft;
                                 }
                             });
                             checkForWinner(gameId, game);
