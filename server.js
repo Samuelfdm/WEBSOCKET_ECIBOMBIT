@@ -5,15 +5,21 @@ require("dotenv").config();
 const backendApi = process.env.BACKEND_URL;
 let rooms = {};
 let games = {};
-
 console.log("BACKEND API URL ANTES DE CONEXION: "+backendApi);
+
+function getRoomListWithPlayerCount() {
+    return Object.keys(rooms).map(roomName => ({
+        name: roomName,
+        playerCount: Object.keys(rooms[roomName].players).length
+    }));
+}
 
 io.on("connection", (socket) => {
 
     console.log("BACKEND API URL DESPUES DE CONEXION: "+backendApi);
 
     socket.on("getRooms", () => {
-        socket.emit("roomsList", Object.keys(rooms));
+        socket.emit("roomsList", getRoomListWithPlayerCount());
     });
 
     socket.on("createRoom", (data, callback) => {
@@ -60,7 +66,7 @@ io.on("connection", (socket) => {
             message: "Sala creada correctamente."
         });
 
-        io.emit("roomsList", Object.keys(rooms));
+        io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
     });
 
     socket.on("joinRoom", (data, callback) => {
@@ -116,7 +122,7 @@ io.on("connection", (socket) => {
             config: sala.config
         });
 
-        io.emit("roomsList", Object.keys(rooms));
+        io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
         io.to(room).emit("updateLobby", serializeRoom(sala, socket.id));
     });
 
@@ -157,7 +163,7 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("startGame", async ({ room, players, config }, callback) => {
+    socket.on("startGame", async ({ room, players, config }, token, callback) => {
         if (!rooms[room]) {
             return callback?.({ success: false, message: "Sala no encontrada." });
         }
@@ -181,6 +187,11 @@ io.on("connection", (socket) => {
                 roomId: room,
                 config,
                 players
+            },{
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
             });
 
             const game = response.data;
@@ -193,7 +204,8 @@ io.on("connection", (socket) => {
                 players: game.players,
                 config: game.config,
                 board: game.board,
-                connectedPlayers:0
+                connectedPlayers:0,
+                jwt: token
             };
 
             // Notificar a todos los clientes LISTOS
@@ -263,10 +275,9 @@ io.on("connection", (socket) => {
                             clearInterval(game.timerInterval);
                             game.timerInterval = null;
                             io.in(game.room).emit("gameTimerTick", { timeLeft: 0 });
-                            const totalTime = game.config.time * 60;
                             game.players.forEach(player => {
                                 if (!player.dead) {
-                                    player.timeAlive = totalTime;
+                                    player.timeAlive = game.timeLeft;
                                 }
                             });
                             checkForWinner(gameId, game);
@@ -351,6 +362,8 @@ io.on("connection", (socket) => {
         player.score = (player.score || 0) + score;
         io.in(game.room).emit("players", game.players);
     });
+
+
 
     socket.on("playerKilled", ({ gameId, killerId, victimId, playerId, x, y }) => {
         const game = games[gameId];
@@ -536,7 +549,7 @@ io.on("connection", (socket) => {
     }
 
     async function finishGame(gameId, game) {
-        console.log(gameId);
+        console.log("SOLICITUD DE FINALIZAR JUEGO CON JUEGO: "+gameId+" "+game.players);
         const gameFinal= {
             id : gameId,
             players : game.players,
@@ -549,6 +562,7 @@ io.on("connection", (socket) => {
         try {
           const response = await axios.put(`${backendApi}/games/${gameId}/finish`, gameFinal, {
             headers: {
+                Authorization: `Bearer ${game.jwt}`,
               'Content-Type': 'application/json'
             }
           });
@@ -585,6 +599,7 @@ io.on("connection", (socket) => {
             delete rooms[room].ready[socket.id];
             delete rooms[room].characters[socket.id];
             io.to(room).emit("updateLobby", serializeRoom(rooms[room]));
+            io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
         }
         callback({ success: true });
     });
@@ -660,10 +675,11 @@ io.on("connection", (socket) => {
                 if (room.owner === socket.id) {
                     io.to(roomName).emit("roomClosed", { message: "El dueño de la sala salió." });
                     delete rooms[roomName];
-                    io.emit("roomsList", Object.keys(rooms));
                 } else {
                     io.to(roomName).emit("updateLobby", serializeRoom(room));
                 }
+                io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
+                break; // Importante para no seguir iterando en salas innecesariamente
             }
         }
     });
