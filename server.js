@@ -163,7 +163,7 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("startGame", async ({ room, players, config }, callback) => {
+    socket.on("startGame", async ({ room, players, config }, token, callback) => {
         if (!rooms[room]) {
             return callback?.({ success: false, message: "Sala no encontrada." });
         }
@@ -187,6 +187,11 @@ io.on("connection", (socket) => {
                 roomId: room,
                 config,
                 players
+            },{
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                }
             });
 
             const game = response.data;
@@ -199,7 +204,8 @@ io.on("connection", (socket) => {
                 players: game.players,
                 config: game.config,
                 board: game.board,
-                connectedPlayers:0
+                connectedPlayers:0,
+                jwt: token
             };
 
             // Notificar a todos los clientes LISTOS
@@ -356,6 +362,8 @@ io.on("connection", (socket) => {
         player.score = (player.score || 0) + score;
         io.in(game.room).emit("players", game.players);
     });
+
+
 
     socket.on("playerKilled", ({ gameId, killerId, victimId, playerId, x, y }) => {
         const game = games[gameId];
@@ -554,6 +562,7 @@ io.on("connection", (socket) => {
         try {
           const response = await axios.put(`${backendApi}/games/${gameId}/finish`, gameFinal, {
             headers: {
+                Authorization: `Bearer ${game.jwt}`,
               'Content-Type': 'application/json'
             }
           });
