@@ -5,15 +5,21 @@ require("dotenv").config();
 const backendApi = process.env.BACKEND_URL;
 let rooms = {};
 let games = {};
-
 console.log("BACKEND API URL ANTES DE CONEXION: "+backendApi);
+
+function getRoomListWithPlayerCount() {
+    return Object.keys(rooms).map(roomName => ({
+        name: roomName,
+        playerCount: Object.keys(rooms[roomName].players).length
+    }));
+}
 
 io.on("connection", (socket) => {
 
     console.log("BACKEND API URL DESPUES DE CONEXION: "+backendApi);
 
     socket.on("getRooms", () => {
-        socket.emit("roomsList", Object.keys(rooms));
+        socket.emit("roomsList", getRoomListWithPlayerCount());
     });
 
     socket.on("createRoom", (data, callback) => {
@@ -60,7 +66,7 @@ io.on("connection", (socket) => {
             message: "Sala creada correctamente."
         });
 
-        io.emit("roomsList", Object.keys(rooms));
+        io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
     });
 
     socket.on("joinRoom", (data, callback) => {
@@ -116,7 +122,7 @@ io.on("connection", (socket) => {
             config: sala.config
         });
 
-        io.emit("roomsList", Object.keys(rooms));
+        io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
         io.to(room).emit("updateLobby", serializeRoom(sala, socket.id));
     });
 
@@ -584,6 +590,7 @@ io.on("connection", (socket) => {
             delete rooms[room].ready[socket.id];
             delete rooms[room].characters[socket.id];
             io.to(room).emit("updateLobby", serializeRoom(rooms[room]));
+            io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
         }
         callback({ success: true });
     });
@@ -659,10 +666,11 @@ io.on("connection", (socket) => {
                 if (room.owner === socket.id) {
                     io.to(roomName).emit("roomClosed", { message: "El dueño de la sala salió." });
                     delete rooms[roomName];
-                    io.emit("roomsList", Object.keys(rooms));
                 } else {
                     io.to(roomName).emit("updateLobby", serializeRoom(room));
                 }
+                io.emit("roomsList", getRoomListWithPlayerCount()); // Enviar lista actualizada con conteo
+                break; // Importante para no seguir iterando en salas innecesariamente
             }
         }
     });
